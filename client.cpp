@@ -6,9 +6,9 @@ int main() {
     int sock_fd = check(make_socket(SOCK_STREAM));
     check(connect(sock_fd, (sockaddr*)&dest_address, sizeof(dest_address)));
 
-    int32_t net_range;
-    check(recv(sock_fd, &net_range, sizeof(net_range), MSG_WAITALL));
-    int range = ntohl(net_range);
+    int32_t range_net;
+    check(recv(sock_fd, &range_net, sizeof(int32_t), MSG_WAITALL));
+    int range = ntohl(range_net);
 
     int low = 1;
     int high = range;
@@ -22,7 +22,6 @@ int main() {
         check(recv(sock_fd, &response, sizeof(response), MSG_WAITALL));
 
         std::cout << "Try: " << guess << ", answer: " << response << std::endl;
-        //sleep(5);
 
         if (response == '=') {
             std::cout << "Correct number: " << guess << std::endl;

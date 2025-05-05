@@ -1,11 +1,9 @@
 #include "common.hpp"
 #include <cstdlib>
-#include <ctime>
 #include <fcntl.h>
 #include <unistd.h>
 #include <wait.h>
 #include <arpa/inet.h>
-#include <pthread.h>
 #include <semaphore.h>
 
 sem_t* log_sem;
@@ -15,11 +13,6 @@ void no_zombie() {
     sa.sa_handler = SIG_IGN;
     sigaction(SIGCHLD, &sa, nullptr);
 }
-
-/*bool process_exists(pid_t p) {
-    return !(kill(p, 0) == -1 && errno == ESRCH);
-}*/
-
 
 void connection(int client_fd, sockaddr_in client_addr, int range_max) {
     srand(getpid());
@@ -46,7 +39,8 @@ void connection(int client_fd, sockaddr_in client_addr, int range_max) {
         std::cout << client_addr << " guessed " << host_guess << std::endl;
         sem_post(log_sem);
 
-        if (result == '=') break;
+        if (result == '=')
+            break;
     }
     sem_wait(log_sem);
     std::cout << client_addr << " disconnected" << std::endl;
@@ -56,14 +50,14 @@ void connection(int client_fd, sockaddr_in client_addr, int range_max) {
 }
 
 int main() {
-    log_sem = check(sem_open("/guessnum_sem", O_CREAT, S_IRWXU, 1));
+    log_sem = check(sem_open("/sem", O_CREAT, S_IRWXU, 1));
     int port = SERVER_PORT;
 
     auto server_addr = local_addr(port);
     int server_fd = check(make_socket(SOCK_STREAM));
 
     int opt = 1;
-    setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    //setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
     check(bind(server_fd, (sockaddr*)&server_addr, sizeof(server_addr)));
     check(listen(server_fd, 10));
 
@@ -88,6 +82,4 @@ int main() {
             close(client_fd);
         }
     }
-    sem_close(log_sem);
-    sem_unlink("/guessnum_sem");
 }
