@@ -1,5 +1,4 @@
 #include "check.hpp"
-#include "common.h"
 #include <iostream>
 #include <fcntl.h>
 #include <vector>
@@ -10,148 +9,196 @@
 
 using namespace std;
 
-struct user_info {
-    string name;
-    string hash;
-    string uid;
-    string home;
-    string shell;
-    vector<string> groups;
-    vector<string> admin_groups;
-};
+class UserInfo {
 
-vector<string> split(const string& str, char delimiter) {
-    vector<string> result;
-    string current_field;
-    for (const char& c : str) {
-        if (c == delimiter) {
-            result.push_back(current_field);
-            current_field.clear();
-        } else {
-            current_field.push_back(c);
+    struct user_info {
+        string name;
+        string hash;
+        string uid;
+        string home;
+        vector<string> groups;
+        vector<string> admin_groups;
+    };
+
+    vector<user_info*> _users;
+
+    void clear_users() {
+        for (auto *user: _users) {
+            delete user;
         }
-    }
-    result.push_back(current_field);
-    return result;
-}
-
-vector<string> read_lines(const char* filename) {
-    int fd = check(open(filename, O_RDONLY));
-
-    off_t file_size = check(lseek(fd, 0, SEEK_END));
-    check(lseek(fd, 0, SEEK_SET));
-
-    vector<char> buffer(file_size + 1);
-    size_t bytes_read = check(read(fd, buffer.data(), file_size));
-    close(fd);
-
-    string content(buffer.data());
-    return split(content, '\n');
-}
-
-void get_user_groups(user_info& user) {
-    struct passwd *pw = getpwnam(user.name.c_str());
-    if (!pw) return;
-
-    int ngroups = 0;
-    getgrouplist(user.name.c_str(), pw->pw_gid, nullptr, &ngroups);
-    if (ngroups <= 0) return;
-
-    gid_t *groups = new gid_t[ngroups];
-    if (getgrouplist(user.name.c_str(), pw->pw_gid, groups, &ngroups) == -1) {
-        delete[] groups;
-        return;
+        _users.clear();
     }
 
-    vector<string> group_lines = read_lines("/etc/group");
-    for (int i = 0; i < ngroups; ++i) {
-        for (const string& line : group_lines) {
-            vector<string> fields = split(line, ':');
-            if (fields.size() >= 3 && stoi(fields[2]) == groups[i]) {
-                user.groups.push_back(fields[0]);
-
-                // Проверяем, является ли пользователь администратором группы
-                if (fields.size() >= 4) {
-                    vector<string> admins = split(fields[3], ',');
-                    for (const string& admin : admins) {
-                        if (admin == user.name) {
-                            user.admin_groups.push_back(fields[0]);
-                            break;
-                        }
-                    }
-                }
-                break;
+    vector<string> split(const string &str, char delimiter) {
+        vector<string> result;
+        string current;
+        for (char c: str) {
+            if (c == delimiter) {
+                result.push_back(current);
+                current.clear();
+            } else {
+                current.push_back(c);
             }
         }
+        result.push_back(current);
+        return result;
     }
-    delete[] groups;
-}
 
-vector<user_info> get_passwd() {
-    vector<user_info> users;
+    vector<string> read_lines(int fd) {
 
-    uid_t original_uid = getuid();
-    uid_t original_euid = geteuid();
+        off_t file_size = check(lseek(fd, 0, SEEK_END));
+        check(lseek(fd, 0, SEEK_SET));
 
-    check(seteuid(0));
+        vector<char> buffer(file_size + 1);
+        check(read(fd, buffer.data(), file_size));
+        close(fd);
 
-    vector<string> passwd_lines = read_lines("/etc/passwd");
-    vector<string> shadow_lines = read_lines("/etc/shadow");
+        string content(buffer.data());
+        return split(content, '\n');
+    }
 
-    check(seteuid(original_euid));
+    void get_user_groups(user_info &user, const vector<string> &group_lines, const vector<string> &gshadow_lines) {
+//        struct passwd *pw = getpwnam(user.name.c_str());
+//        if (!pw)
+//            return;
+//
+//        int ngroups;
+//        getgrouplist(user.name.c_str(), pw->pw_gid, nullptr, &ngroups);
+//
+//        vector<gid_t> groups(ngroups);
+//        getgrouplist(user.name.c_str(), pw->pw_gid, groups.data(), &ngroups);
+//
+//        for (const string &line: group_lines) {
+//            vector<string> fields = split(line, ':');
+//            if (fields.size() < 3)
+//                continue;
+//
+//            gid_t gid = stoi(fields[2]);
+//
+//            for (gid_t g: groups) {
+//                if (g == gid) {
+//                    user.groups.push_back(fields[0]);
+//                    break;
+//                }
+//            }
+//        }
+        for (const string &line: group_lines) {
+            vector<string> fields = split(line, ':');
+            if (fields.size() < 3)
+                continue;
 
-    for (const string& line : passwd_lines) {
-        vector<string> fields = split(line, ':');
-        if (fields.size() >= 7) {
-            user_info user;
-            user.name = fields[0];
-            user.uid = fields[2];
-            user.home = fields[5];
-            user.shell = fields[6];
+            const string &group_name = fields[0];
+            const string &admin_field = fields[3];
+            vector<string> members = split(admin_field, ',');
 
-            for (const string& sh : shadow_lines) {
-                vector<string> sf = split(sh, ':');
-                if (sf.size() >= 2 && sf[0] == user.name) {
-                    user.hash = sf[1];
+            for (const string &member: members) {
+                if (member == user.name) {
+                    user.groups.push_back(group_name);
                     break;
                 }
             }
-
-            get_user_groups(user);
-            users.push_back(user);
+            if (user.groups.empty())
+                user.groups.push_back(user.name);
         }
-    }
-    return users;
-}
+        for (const string &line: gshadow_lines) {
+            vector<string> fields = split(line, ':');
+            if (fields.size() < 4)
+                continue;
 
-void print_user_info(const user_info& user) {
-    cout << "Пользователь: " << user.name << endl;
-    cout << "  UID: " << user.uid << endl;
-    cout << "  Домашний каталог: " << user.home << endl;
-    cout << "  Оболочка: " << user.shell << endl;
-    cout << "  Хэш пароля: " << user.hash << endl;
+            const string &group_name = fields[0];
+            const string &admin_field = fields[2];
+            vector<string> admins = split(admin_field, ',');
 
-    cout << "  Группы: ";
-    for (size_t i = 0; i < user.groups.size(); ++i) {
-        cout << user.groups[i];
-        // Помечаем группы, где пользователь администратор
-        for (const string& admin_group : user.admin_groups) {
-            if (admin_group == user.groups[i]) {
-                cout << "(admin)";
-                break;
+            for (const string &admin: admins) {
+                if (admin == user.name) {
+                    user.admin_groups.push_back(group_name);
+                    break;
+                }
             }
         }
-        if (i < user.groups.size() - 1) cout << ", ";
     }
-    cout << " "<<endl;
-}
+
+    void get_passwd() {
+
+        uid_t original_euid = geteuid();
+
+        int fd_shadow = check(open("/etc/shadow", O_RDONLY));
+        int fd_gshadow = check(open("/etc/gshadow", O_RDONLY));
+
+        check(seteuid(original_euid));
+
+        int fd_passwd = check(open("/etc/passwd", O_RDONLY));
+        int fd_group = check(open("/etc/group", O_RDONLY));
+
+
+        vector<string> shadow_lines = read_lines(fd_shadow);
+        vector<string> gshadow_lines = read_lines(fd_gshadow);
+        vector<string> passwd_lines = read_lines(fd_passwd);
+        vector<string> group_lines = read_lines(fd_group);
+
+
+        for (const string &line: passwd_lines) {
+            vector<string> fields = split(line, ':');
+            if (fields.size() >= 7) {
+                auto *user = new user_info;
+                user->name = fields[0];
+                user->uid = fields[2];
+                user->home = fields[5];
+
+                for (const string &sh: shadow_lines) {
+                    vector<string> sf = split(sh, ':');
+                    if (sf.size() >= 2 && sf[0] == user->name) {
+                        user->hash = sf[1];
+                        break;
+                    }
+                }
+                get_user_groups(*user, group_lines, gshadow_lines);
+                _users.push_back(user);
+            }
+        }
+    }
+
+public:
+
+    UserInfo() = default;
+
+    ~UserInfo() {
+        clear_users();
+    }
+
+    void get_user_info() {
+        get_passwd();
+    }
+
+    void print_user_info() {
+        for (const auto *user: _users) {
+            cout << "Пользователь: " << user->name << endl;
+            cout << " UID: " << user->uid << endl;
+            cout << " Домашний каталог: " << user->home << endl;
+            cout << " Хэш пароля: " << user->hash << endl;
+
+            cout << " Группы: ";
+            for (size_t i = 0; i < user->groups.size(); ++i) {
+                cout << user->groups[i];
+                if (i != user->groups.size() - 1)
+                    cout << ", ";
+            }
+            cout << endl;
+
+            cout << " Администратор в группах: ";
+            for (size_t i = 0; i < user->admin_groups.size(); ++i) {
+                cout << user->admin_groups[i];
+                if (i != user->admin_groups.size() - 1)
+                    cout << ", ";
+            }
+            cout << endl << endl;
+        }
+    }
+};
 
 int main() {
-
-    vector<user_info> users = get_passwd();
-    for (const auto& user : users) {
-        print_user_info(user);
-    }
-
+    UserInfo info;
+    info.get_user_info();
+    info.print_user_info();
     return 0;
 }
